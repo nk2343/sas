@@ -1,0 +1,121 @@
+proc sql noprint;
+	create table demo_trt as
+		select a.patient,sex,age,wtkg,htcm,race,
+				case when 18<age<=40 then '18-40'
+					 when 41<age<=64 then '41-64'
+					 when age>=65 then '>=65'
+					 else ''
+					 end as agecat,drugsort
+
+		from raw.demog as a join raw.dose b
+		on a.patient=b.patient
+		;
+
+
+	create table demo_trt_tot as
+		(select * from demo_trt outer union corr
+		select *,3 as drugsort from demo_trt(drop=drugsort))
+		order drugsort
+		;
+
+
+quit;
+
+
+%macro freq(var);
+
+
+proc sql noprint;
+
+	create table &var._cntpct as
+		select a.*, cat(strip(put(a.count,best.)),'(',strip(put(round((a.count/b.count)*100,.1),best.)),')') as cntpct
+		from (
+				select distinct &var.,drugsort as trt,count(patient) as count
+				from demo_trt_tot
+				group by &var.,drugsort
+			 ) a join 
+			 ( 
+			 	select distinct drugsort as trt,count(patient) as count
+				from demo_trt_tot
+				group by drugsort
+			 )
+				b
+		on a.trt=b.trt
+		order &var.
+		;
+quit;
+
+proc transpose data=&var._cntpct out=&var._cntpct_t prefix=trt;
+by &var.;
+var cntpct;
+id trt;
+run;
+
+%mend freq;
+
+%freq(var=sex)
+%freq(var=agecat)
+
+proc means data=demo_trt_tot noprint;
+by drugsort;
+output out=age_sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+run;
+
+proc sql noprint;
+	create table age_sumst as
+		select drugsort as trt, strip(put(n_,best.)) as n,
+						 strip(put(round(mean_,.1),8.1)) as mean,
+						 strip(put(round(std_,.01),best.)) as std,
+						 cat(strip(put(min_,best.)),',',strip(put(max_,best.))) as range
+		from age_sumstat
+		;
+quit;
+
+proc transpose data=age_sumst out=age_sumst_t prefix=trt;
+var n mean std range;
+id trt;
+run;
+
+data label;
+	length cat $40.;
+	cat='Age (yrs)'; output;
+	cat='Sex n(%)'; output;
+run;
+
+
+proc sql noprint;
+	create table demo_all as
+		select case when cat='agesum' and _name_='n' 		then '   N' 
+			    	when cat='agesum' and _name_='mean'		then '   Mean'
+			        when cat='agesum' and _name_='std' 		then '   S.D.'
+					when cat='agesum' and _name_='range'	then '   Range (Min, Max)'
+					when sex=1 								then '   Male'
+					when sex=2 								then '   Female'
+					when cat='agecatcnt'					then cat('   ',agecat)
+					else cat
+					end as cat,
+
+				case    when cat='Age (yrs)'					then 10 
+						when cat='Sex n(%)'						then 20 
+						when cat='agesum' and _name_='n' 		then 11 
+				    	when cat='agesum' and _name_='mean'		then 15
+				        when cat='agesum' and _name_='std' 		then 16
+						when cat='agesum' and _name_='range'	then 17
+						when sex=1 								then 21
+						when sex=2 								then 22
+						when agecat='18-40'						then 12
+						when agecat='41-64'						then 13
+						when agecat='>=65'						then 14
+						else .
+						end as catn,
+				ifc(trt1='','0',trt1) as trt1, trt2,trt3
+ 
+		from 
+		( select * from label outer union corr
+		  select 'agesum' as cat,* from age_sumst_t outer union corr
+		  select 'sexcnt' as cat,* from sex_cntpct_t outer union corr
+		  select 'agecatcnt' as cat,* from agecat_cntpct_t
+		)
+		order calculated catn 
+		;
+quit;

@@ -1,0 +1,75 @@
+libname demo '/folders/myfolders/eee';
+
+data demo_trt;
+merge demo.dose_(in=a) demo.mhistabn_(in=b);
+by PATIENT;
+if a and b;
+run;
+
+proc sort data=demo_trt nodupkey out=demo_trt1;
+by patient bodysysm;
+run;
+
+PROC SQL;
+   CREATE TABLE mhis AS
+   SELECT drugsort,
+                sum(bodysysm=1 ) as HEENT LABEL='HEENT',
+                sum(bodysysm=2 ) as RE LABEL='Respiratory' ,
+                sum(bodysysm=3 ) as CV LABEL='Cardiovascular',
+                sum(bodysysm=4 ) as GI LABEL='Gastrointestinal',
+                sum(bodysysm=5 ) as GU LABEL='Genitourinary',
+                sum(bodysysm=6 ) as NER LABEL='Neurological',
+                sum(bodysysm=7 ) as HAL LABEL＝'Hematopoietic and Lymphatic',
+                sum(bodysysm=8 ) as EAM LABEL＝'Endocrine and metabolic',
+                sum(bodysysm=9 ) as MUSC LABEL='Musculoskeletal',
+                sum(bodysysm=10) as DERM LABEL='Dermatological',
+                sum(bodysysm=11) as PSYC LABEL＝'Psychiatric/Psychological',
+                sum(bodysysm=12) as OTHER LABEL='Other',
+                sum(bodysysm=13) as AllERGY LABEL='Allergies'        
+      from work.demo_trt1
+      group by drugsort;   
+QUIT;
+
+proc transpose data=mhis out=mhis_t prefix=trt;
+var HEENT RE CV GI GU NER HAL EAM MUSC DERM PSYC OTHER ALLERGY;
+run;
+
+ods pdf file="/folders/myfolders/eee/mhis.pdf";
+proc report data=work.mhis_t  ;
+run;
+ods pdf close;
+
+data mhis_pct;
+set mhis_t;
+pct1=round(trt1/11,.1);
+cntpct1=cat(strip(put(trt1,best.)),'(',strip(put(pct1*100,bestd5.2)),'%)');
+pct2=round(trt2/6,.1);
+cntpct2=cat(strip(put(trt2,best.)),'(',strip(put(pct2*100,bestd5.2)),'%)');
+run;
+
+proc sql;
+   insert into mhis_pct
+      set _label_='TOTAL#',
+          cntpct1='11',
+          cntpct2='6';
+quit;
+proc sql;
+   delete
+      from mhis_pct
+      where _NAME_='TOTAL#';
+      QUIT;
+      
+ods pdf file="/folders/myfolders/eee/mhis.pdf";
+
+proc report data=work.mhis_pct(drop=trt1 trt2);
+title1 "Medical History Findings by Body System";
+title2 "All Patients Dosed";
+footnote "#      Patients with an abnormality in more than one body system are counted once in the total";
+column _LABEL_ cntpct1 cntpct2 ;
+define _LABEL_/display '_body system_';
+define cntpct1/display 'Bogusene/N=11/n(%)'; 
+define cntpct2/display 'Placebo/N=6/n(%)';
+run;
+ods pdf close;
+
+

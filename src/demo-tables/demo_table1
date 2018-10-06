@@ -1,0 +1,785 @@
+libname demo '/folders/myfolders/eee';
+
+data demo_trt;
+merge demo.dose_(in=a) demo.demog_(in=b);
+by PATIENT;
+if a and b;
+run;
+
+data demo_trt;
+set demo_trt;
+output;
+drugsort=3; output;
+run;
+
+proc freq data=demo_trt noprint;
+tables drugsort*sex /out=dem_sex(drop=percent);
+run;
+
+data demo_alltrt;
+set demo.dose_;
+output;
+drugsort=3; output;
+run;
+
+proc freq data=demo_alltrt noprint;
+tables drugsort /out=dem_trt(drop=percent);
+run;
+
+data dem_pct;
+merge dem_sex dem_trt(rename=(count=tot));
+by drugsort;
+pct=round(count/tot,.1);
+cntpct=cat(strip(put(count,best.)),'(',strip(put(pct,best.)),')');
+run;
+
+proc sort data=dem_pct;
+by sex;
+run;
+
+proc transpose data=dem_pct out=dem_pct_t prefix=trt;
+by sex;
+id drugsort;
+var cntpct;
+run;
+/******************************************************agecat*************************/
+data demo_trt;
+set demo_trt;
+if (age < 41)and (age>18) then agecat='18-40';
+else if (age <65)and (age>=41) then agecat='41-64';
+else if  (age>=65) then agecat='>=65';
+RUN;
+
+proc freq data=demo_trt noprint;
+tables drugsort*agecat /out=dem_agecat(drop=percent);
+run;
+
+data demo_alltrt;
+set demo.dose_;
+output;
+drugsort=3; output;
+run;
+
+proc freq data=demo_alltrt noprint;
+tables drugsort /out=dem_trt(drop=percent);
+run;
+
+data dem_pct;
+merge dem_agecat dem_trt(rename=(count=tot));
+by drugsort;
+pct=round(count/tot,.1);
+cntpct=cat(strip(put(count,best.)),'(',strip(put(pct,best.)),')');
+run;
+
+proc sort data=dem_pct;
+by agecat;
+run;
+
+proc transpose data=dem_pct out=dem_pct_t_agecat prefix=trt;
+by agecat;
+id drugsort;
+var cntpct;
+run;
+/***************************************************race*****/
+
+proc freq data=demo_trt noprint;
+tables drugsort*race /out=dem_race(drop=percent);
+run;
+
+data demo_alltrt;
+set demo.dose_;
+output;
+drugsort=3; output;
+run;
+
+proc freq data=demo_alltrt noprint;
+tables drugsort /out=dem_trt(drop=percent);
+run;
+
+data dem_pct;
+merge dem_race dem_trt(rename=(count=tot));
+by drugsort;
+pct=round(count/tot,.1);
+cntpct=cat(strip(put(count,best.)),'(',strip(put(pct,best.)),')');
+run;
+
+proc sort data=dem_pct;
+by race;
+run;
+
+proc transpose data=dem_pct out=dem_pct_t_race prefix=trt;
+by race;
+id drugsort;
+var cntpct;
+run;
+/*****************************************************************************************/
+%macro sumstat(var);
+
+proc sort data=demo_trt; by drugsort; run;
+
+proc means data=demo_trt noprint;
+
+by drugsort;
+
+var &var;
+
+output out=&var._sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+
+run;
+
+ 
+data &var._trt;
+set &var._sumstat;
+n=strip(put(n_,best.));
+
+minmax=cat(strip(put(min_,best.)),',',strip(put(max_,best.)));
+
+std=strip(put(round(std_,.01),best.));
+
+mean=strip(put(round(mean_,.1),best.));
+
+run;
+
+ 
+
+proc transpose data=&var._trt out=&var._t prefix=trt;
+
+id drugsort;
+
+var n std minmax mean;
+
+run;
+
+data &var._t;
+
+set &var._t;
+
+length cat $30;
+
+if _name_='n' then do; cat='N'; catn=1; end;
+
+else if _name_='std' then do; cat='S.D.'; catn=3; end;
+
+else if _name_='mean' then do; cat='Mean'; catn=2; end;
+
+else if _name_='minmax' then do; cat='Range(Min,Max)'; catn=4; end;
+
+keep cat catn trt1-trt3;
+
+run;
+
+
+proc sql noprint;
+
+create table &var._all as
+
+select cat,catn,trt1,trt2,trt3
+
+from &var._t
+
+order catn;
+
+quit;
+
+%mend sumstat;
+
+%sumstat(var=age);
+%sumstat(var=htcm);
+%sumstat(var=wtkg);
+
+/*****************/
+
+
+
+
+
+proc sql noprint;
+	create table demo_trt as
+		select a.patient,sex,age,wtkg,htcm,race,
+				case when 18<age<=40 then '18-40'
+					 when 41<age<=64 then '41-64'
+					 when age>=65 then '>=65'
+					 else ''
+					 end as agecat,drugsort
+
+		from raw.demog as a join raw.dose b
+		on a.patient=b.patient
+		;
+
+
+	create table demo_trt_tot as
+		(select * from demo_trt outer union corr
+		select *,3 as drugsort from demo_trt(drop=drugsort))
+		order drugsort
+		;
+
+
+quit;
+
+
+%macro freq(var);
+
+
+proc sql noprint;
+
+	create table &var._cntpct as
+		select a.*, cat(strip(put(a.count,best.)),'(',strip(put(round((a.count/b.count)*100,.1),best.)),')') as cntpct
+		from (
+				select distinct &var.,drugsort as trt,count(patient) as count
+				from demo_trt_tot
+				group by &var.,drugsort
+			 ) a join 
+			 ( 
+			 	select distinct drugsort as trt,count(patient) as count
+				from demo_trt_tot
+				group by drugsort
+			 )
+				b
+		on a.trt=b.trt
+		order &var.
+		;
+quit;
+
+proc transpose data=&var._cntpct out=&var._cntpct_t prefix=trt;
+by &var.;
+var cntpct;
+id trt;
+run;
+
+%mend freq;
+
+%freq(var=sex)
+%freq(var=agecat)
+
+proc means data=demo_trt_tot noprint;
+by drugsort;
+output out=age_sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+run;
+
+proc sql noprint;
+	create table age_sumst as
+		select drugsort as trt, strip(put(n_,best.)) as n,
+						 strip(put(round(mean_,.1),8.1)) as mean,
+						 strip(put(round(std_,.01),best.)) as std,
+						 cat(strip(put(min_,best.)),',',strip(put(max_,best.))) as range
+		from age_sumstat
+		;
+quit;
+
+proc transpose data=age_sumst out=age_sumst_t prefix=trt;
+var n mean std range;
+id trt;
+run;
+
+data label;
+	length cat $40.;
+	cat='Age (yrs)'; output;
+	cat='Sex n(%)'; output;
+run;
+
+
+proc sql noprint;
+	create table demo_all as
+		select case when cat='agesum' and _name_='n' 		then '   N' 
+			    	when cat='agesum' and _name_='mean'		then '   Mean'
+			        when cat='agesum' and _name_='std' 		then '   S.D.'
+					when cat='agesum' and _name_='range'	then '   Range (Min, Max)'
+					when sex=1 								then '   Male'
+					when sex=2 								then '   Female'
+					when cat='agecat'					then cat('   ',agecat)
+					else cat
+					end as cat,
+
+				case    when cat='Age (yrs)'					then 10 
+						when cat='Sex n(%)'						then 20 
+						when cat='agesum' and _name_='n' 		then 11 
+				    	when cat='agesum' and _name_='mean'		then 15
+				        when cat='agesum' and _name_='std' 		then 16
+						when cat='agesum' and _name_='range'	then 17
+						when sex=1 								then 21
+						when sex=2 								then 22
+						when agecat='18-40'						then 12
+						when agecat='41-64'						then 13
+						when agecat='>=65'						then 14
+						else .
+						end as catn,
+				ifc(trt1='','0',trt1) as trt1, trt2,trt3
+ 
+		from 
+		( select * from label outer union corr
+		  select 'agesum' as cat,* from age_sumst_t outer union corr
+		  select 'sexcnt' as cat,* from sex_cntpct_t outer union corr
+		  select 'agecatcnt' as cat,* from agecat_cntpct_t outer union corr
+		  select ''
+		)
+		order calculated catn 
+		;
+quit;
+
+
+
+
+
+/*
+
+data demo_all;
+	set label age_sumst_t sex_cntpct_t age_cntpct_t;
+run;
+
+proc freq 
+tables sex*drugsort
+
+output; drugsort=3; output;
+
+proc freq..
+
+proc sort ..
+
+proc sort .. 
+
+data xxx
+	merge xxx xxx;
+	by patient;
+run;
+
+
+*/
+/*
+proc sql noprint;
+	create table sex_cnt as
+		select distinct sex,drugsort as trt,count(patient) as count
+		from demo_trt_tot
+		group by sex,drugsort
+		;
+
+	create table trt_cnt as
+		select distinct drugsort as trt,count(patient) as count
+		from demo_trt_tot
+		group by drugsort;
+
+	create table sex_cntpct as
+		select a.*, cat(strip(put(a.count,best.)),'(',strip(put(round((a.count/b.count)*100,.1),best.)),')') as cntpct
+		from sex_cnt a join trt_cnt b
+		on a.trt=b.trt
+		;
+quit;
+*/
+
+
+
+
+/************/
+data label;
+	length cat $40.;
+	cat='Age (yrs)'; output;
+	cat='Sex n(%)'; output;
+	cat='Race n(%)'; output;
+	cat='Weight (kg)'; output;
+	cat='Height (cm)'; output;
+run;
+PROC SQL;
+    CREATE TABLE age1_all AS
+        SELECT  cat as cat1, trt1, trt2, trt3
+    
+       FROM     age_all;
+QUIT;
+PROC SQL;
+    CREATE TABLE htcm1_all AS
+   
+        select cat as cat2, trt1, trt2, trt3
+    
+       FROM     htcm_all;
+QUIT;
+PROC SQL;
+    CREATE TABLE wtkg1_all AS
+        SELECT  cat as cat3, trt1, trt2, trt3
+    
+       FROM     wtkg_all;
+QUIT;
+proc sql noprint;
+	create table demo_all as
+	select case     when cat1='N'		         then '   N' 
+			    	when cat1='Mean'  		     then '   Mean'
+			        when cat1='S.D.'		     then '   S.D.'
+					when cat1='Range(Min,Max)'	 then '   Range (Min, Max)'
+					
+					when cat2='N'		         then '   N' 
+			    	when cat2='Mean'  		     then '   Mean'
+			        when cat2='S.D.'		     then '   S.D.'
+					when cat2='Range(Min,Max)'	 then '   Range (Min, Max)'
+					
+					when cat3='N'		         then '   N' 
+			    	when cat3='Mean'  		     then '   Mean'
+			        when cat3='S.D.'		     then '   S.D.'
+					when cat3='Range(Min,Max)'	 then '   Range (Min, Max)'
+					
+					when sex=1 								then '   Male'
+					when sex=2 								then '   Female'
+					
+					when agecat='18-40'						then '   18-40'
+					when agecat='41-64'						then '   41-64'
+					when agecat='>=65'						then '   >=65'
+					
+					when race='B'                           then '    Black'
+					when race='W'                           then '    White'
+					
+					else cat
+					end as cat,
+
+		 case    
+						when cat='Sex n(%)'						then 10 
+						when sex=1 								then 11
+						when sex=2 								then 12
+						
+						when cat='Age (yrs)'					then 20 
+						when agecat='18-40'						then 22
+						when agecat='41-64'						then 23
+						when agecat='>=65'						then 24
+						when cat1='N'                           then 21
+						when cat1='Mean'                        then 25
+						when cat1='S.D.'                        then 26
+						when cat1='Range(Min,Max)'              then 27
+						
+						when cat='Race n(%)'                    then 30
+						when race='B'                           then 31
+						when race='W'                           then 32
+                                               
+						when cat='Weight (kg)'                  then 40
+						when cat3='N'                           then 41
+						when cat3='Mean'                        then 42
+						when cat3='S.D.'                        then 43
+						when cat3='Range(Min,Max)'              then 44
+						
+						when cat='Height (cm)'                  then 50
+						when cat2='N'                           then 51
+						when cat2='Mean'                        then 52
+						when cat2='S.D.'                        then 53
+						when cat2='Range(Min,Max)'              then 54
+						else .
+						end as catn,
+				ifc(trt1='','0',trt1) as trt1, trt2,trt3
+
+ 
+		from 
+		( select * from label outer union corr
+		  select * from dem_pct_t outer union corr
+		  select * from dem_pct_t_agecat outer union corr
+		  select * from dem_pct_t_race outer union corr
+		  select * from age1_all outer union corr
+		  select * from htcm1_all outer union corr
+		  select * from wtkg1_all 
+		)
+		order calculated catn 
+		;
+quit;
+
+data demo.demo_all_1;
+set demo.demo_all;
+if cat in ("Age (yrs)" ,"Sex n(%)","Race n(%)","Weight (kg)","Height (cm)")
+then trt1="";
+if cat in("    White")
+then trt2="0";
+run;
+
+ods pdf file="/folders/myfolders/eee/demo.pdf";
+proc report data=demo.demo_all_1(drop=catn);
+title "demo_table";
+column cat trt1 trt2 trt3;
+define cat/display 'Characteristics';
+define trt1/display 'Bogusene/N=11'; 
+define trt2/display 'Placebo/N=6';
+define trt3/display 'Overall/N=17';
+run;
+ods pdf close;
+
+
+
+////////////////////////////////////////////---------------------
+libname demo '/folders/myfolders/eee';
+
+　
+data demo_trt;
+
+merge demo.dose_(in=a) demo.demog_(in=b);
+
+by PATIENT;
+if a and b;
+
+run;
+
+data demo_trt;
+
+set demo_trt;
+
+output;
+
+drugsort=3; output;
+
+run;
+
+proc freq data=demo_trt noprint;
+
+tables drugsort*sex /out=dem_sex(drop=percent);
+
+run;
+
+data demo_alltrt;
+
+set demo.dose_;
+
+output;
+
+drugsort=3; output;
+
+run;
+
+proc freq data=demo_alltrt noprint;
+
+tables drugsort /out=dem_trt(drop=percent);
+
+run;
+
+data dem_pct;
+
+merge dem_sex dem_trt(rename=(count=tot));
+
+by drugsort;
+
+pct=round(count/tot,.1);
+
+cntpct=cat(strip(put(count,best.)),'(',strip(put(pct,best.)),')');
+
+run;
+
+proc sort data=dem_pct;
+
+by sex;
+
+run;
+
+proc transpose data=dem_pct out=dem_pct_t prefix=trt;
+
+by sex;
+
+id drugsort;
+
+var cntpct;
+
+run;
+
+/**libname demo '/folders/myfolders/eee';***/
+
+/*%macro sumstat(var);**/
+
+proc sort data=demo_trt; by drugsort; run;
+
+proc means data=demo_trt noprint;
+
+by drugsort;
+
+var age;
+
+output out=age_sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+
+run;
+
+　
+
+data age_trt;
+
+set age_sumstat;
+n=strip(put(n_,best.));
+minmax=cat(strip(put(min_,best.)),',',strip(put(max_,best.)));
+
+std=strip(put(round(std_,.01),best.));
+
+mean=strip(put(round(mean_,.1),best.));
+
+run;
+
+　
+
+proc transpose data=age_trt out=age_t prefix=trt;
+
+id drugsort;
+
+var n std minmax mean;
+
+run;
+
+data age_t;
+
+set age_t;
+
+length cat $30;
+
+if _name_='n' then do; cat='N'; catn=1; end;
+
+else if _name_='std' then do; cat='S.D.'; catn=3; end;
+
+else if _name_='mean' then do; cat='Mean'; catn=2; end;
+
+else if _name_='minmax' then do; cat='Range(Min,Max)'; catn=4; end;
+
+keep cat catn trt1-trt3;
+
+run;
+
+proc sql noprint;
+
+create table age_all as
+
+select cat,catn,trt1,trt2,trt3
+
+from age_t
+
+order catn
+
+;
+
+quit;
+
+/**%mend sumstat;***/
+
+%sumstat(var=age);
+
+%sumstat(var=wtkg);
+
+%sumstat(var=htcm);
+
+proc sort data=demo_trt; by drugsort; run;
+
+proc means data=demo_trt noprint;
+
+by drugsort;
+
+var wtkg;
+
+output out=wtkg_sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+
+run;
+
+　
+data wtkg_trt;
+
+set wtkg_sumstat;
+n=strip(put(n_,best.));
+minmax=cat(strip(put(min_,best.)),',',strip(put(max_,best.)));
+
+std=strip(put(round(std_,.01),best.));
+
+mean=strip(put(round(mean_,.1),best.));
+
+run;
+
+　
+
+proc transpose data=wtkg_trt out=wtkg_t prefix=trt;
+
+id drugsort;
+
+var n std minmax mean;
+
+run;
+
+data wtkg_t;
+
+set wtkg_t;
+
+length cat $30;
+
+if _name_='n' then do; cat='N'; catn=1; end;
+
+else if _name_='std' then do; cat='S.D.'; catn=3; end;
+
+else if _name_='mean' then do; cat='Mean'; catn=2; end;
+
+else if _name_='minmax' then do; cat='Range(Min,Max)'; catn=4; end;
+
+keep cat catn trt1-trt3;
+
+run;
+
+proc sql noprint;
+
+create table wtkg_all as
+
+select cat,catn,trt1,trt2,trt3
+
+from wtkg_t
+
+order catn
+
+;
+
+quit;
+/*********************************************/
+proc sort data=demo_trt; by drugsort; run;
+
+proc means data=demo_trt noprint;
+
+by drugsort;
+
+var htcm;
+
+output out=htcm_sumstat n=n_ mean=mean_ std=std_ min=min_ max=max_;
+
+run;
+
+　
+
+data htcm_trt;
+
+set htcm_sumstat;
+n=strip(put(n_,best.));
+minmax=cat(strip(put(min_,best.)),',',strip(put(max_,best.)));
+
+std=strip(put(round(std_,.01),best.));
+
+mean=strip(put(round(mean_,.1),best.));
+
+run;
+
+　
+
+proc transpose data=htcm_trt out=htcm_t prefix=trt;
+
+id drugsort;
+
+var n std minmax mean;
+
+run;
+
+data htcm_t;
+
+set htcm_t;
+
+length cat $30;
+
+if _name_='n' then do; cat='N'; catn=1; end;
+
+else if _name_='std' then do; cat='S.D.'; catn=3; end;
+
+else if _name_='mean' then do; cat='Mean'; catn=2; end;
+
+else if _name_='minmax' then do; cat='Range(Min,Max)'; catn=4; end;
+
+keep cat catn trt1-trt3;
+
+run;
+
+proc sql noprint;
+
+create table htcm_all as
+
+select cat,catn,trt1,trt2,trt3
+
+from htcm_t
+
+order catn
+
+;
+
+quit;
+
+

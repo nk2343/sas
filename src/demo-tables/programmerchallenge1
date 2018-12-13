@@ -1,0 +1,289 @@
+/***********Part 1. Import Data ***********************************************/
+
+/****note:generated three datasets to run the data.
+the original datasets are named as work.demo :Patient Demographic, 
+                                   work.pre  : Prescription, 
+                                   work.med  : and Medical;**************/ 
+proc import datafile='/folders/myfolders/test/demographic.csv' 
+ out=demo 
+ dbms=csv    
+ replace;
+run;
+
+proc import datafile='/folders/myfolders/test/prescription.csv' 
+ out=pre 
+ dbms=csv    
+ replace;
+run;
+
+proc import datafile='/folders/myfolders/test/medical.csv' 
+ out=med 
+ dbms=csv    
+ replace;
+run;
+
+/**note: First,transfer the variable birthdt in csv file from numeric to the format specified in instruction ***/
+data demo(drop=birthdt rename =(birthdt_=birthdt));
+set demo;
+length birthdt_ $20 ;
+if birthdt<10000000 then birthdt_=cat('0',strip(put(birthdt,best.))); 
+else birthdt_=strip(put(birthdt,best.));
+run;
+/*******************0. subset teen*******************************************/
+/**note:birthdate range for teenage patients:1983.1.1-1988.1.1*/
+
+data demo_teen;
+set demo;
+birth_num=input(birthdt,mmddyy8.);
+if birth_num >= input('01011983',mmddyy8.) and birth_num<= input('01011988',mmddyy8.); /**note:teenage birthdate range for teenage patients:1983.1.1-1988.1.1*/
+run;
+
+/***********Part 2. SAS code for PRC Programmer Challenge**************************/
+
+/*******************1. teenage subset in presripction &medication record**********************/
+data pres_teen;
+merge demo_teen(in=a) pre(in=b);
+by patient_id;
+if a and b;
+run;
+
+data med_teen;
+merge demo_teen(in=a) med(in=b);
+by patient_id;
+if a and b;
+run;
+/********************2. subset medical record soucre:phy*********************/
+data med_phy;
+set med_teen;
+if source='phy';
+run;
+/********************3. gen new var med_flag in medical record**************/
+data 
+set med_phy;
+code1=input(diagnosiscode1,best.);
+code2=input(diagnosiscode2,best.);
+code3=input(diagnosiscode3,best.);
+if   0<=code1<=100 or 0<=code2<=100   or 0<=code3<=100   then Dx_GP01=1; else Dx_GP01=0;
+if 101<=code1<=200 or 101<=code2<=200 or 101<=code3<=200 then Dx_GP02=1; else Dx_GP02=0;
+if 201<=code1<=300 or 201<=code2<=300 or 201<=code3<=300 then Dx_GP03=1; else Dx_GP03=0;
+if 301<=code1<=400 or 301<=code2<=400 or 301<=code3<=400 then Dx_GP04=1; else Dx_GP04=0;
+if 401<=code1<=500 or 401<=code2<=500 or 401<=code3<=500 then Dx_GP05=1; else Dx_GP05=0;
+if 501<=code1<=600 or 501<=code2<=600 or 501<=code3<=600 then Dx_GP06=1; else Dx_GP06=0;
+if 601<=code1<=700 or 601<=code2<=700 or 601<=code3<=700 then Dx_GP07=1; else Dx_GP07=0;
+if 701<=code1<=800 or 701<=code2<=800 or 701<=code3<=800 then Dx_GP08=1; else Dx_GP08=0;
+if 801<=code1<=900 or 801<=code2<=900 or 801<=code3<=900 then Dx_GP09=1; else Dx_GP09=0;
+if 901<=code1<=999 or 901<=code2<=999 or 901<=code3<=999 then Dx_GP10=1; else Dx_GP10=0;
+run;
+/*******************4. descriptive statistics for each of the patient demographic variables******/
+/************************4.1 sex*****/
+proc freq data=demo_teen noprint;
+tables sex /out=sex;
+run;
+
+/************************4.2 race*****/
+proc freq data=demo_teen noprint;
+tables race /out=race;
+run;
+
+/************************4.3 age*****/
+data demo_age;
+set demo_teen;
+birth_num=input(birthdt,mmddyy8.);
+a=input('01012001',mmddyy8.);
+age=round((a-birth_num)/365);
+run;
+
+proc means mean data=demo_age noprint;
+var age;
+output out=age n=n_ mean=mean_ std=std_ min=min_ max=max_;
+run;
+
+proc univariate data=demo_age;
+   var age;  
+   histogram age ;
+run;
+/*******************5. average age across all patients***********************/
+
+data demo_allage;
+set demo;
+birth_num=input(birthdt,mmddyy8.);
+a=input('01012001',mmddyy8.);
+age=round((a-birth_num)/365);
+run;
+
+proc means data=demo_allage noprint;
+var age;
+output out=all_age n=n_ mean=mean_ std=std_ min=min_ max=max_ ;
+run;
+
+/********note: assuming all patients, not only teenage patients*/
+proc report data=all_age;
+title 'the average age across all patients';
+column mean_;
+define mean_/display "the average age across all patients";   
+run;
+
+/******************6. portion of patients on drug and physician visit********/
+proc sql;
+create table portion as
+select demo.patient_id as d, pre.patient_id as p,med.patient_id as m, 
+count(demo.patient_id)as a, count (distinct pre.patient_id) as b, count (distinct med.patient_id) as c,
+case when m ne . or d ne . then count (distinct demo.patient_id) 
+else .
+end as bc
+from demo full join med on (demo.patient_id=med.patient_id) 
+          full join pre on (demo.patient_id=pre.patient_id);
+quit;
+
+data pct;
+set portion;
+portion_d=put(round(b/a*100,.01),best.);
+pct_d=cat(strip(portion_d),'%');
+portion_p=put(round(c/a*100,.01),best.);
+pct_p=cat(strip(portion_p),'%');
+portion_dp=put(round(bc/a*100,.01),best.);
+pct_dp=cat(strip(portion_dp),'%');
+run;
+
+proc sort data=pct nodupkey;
+by pct_d;
+run;
+
+proc report data=pct;
+title 'Proportion of Drug and Prescription';
+column pct_d pct_p pct_dp;
+define pct_d/display "portion of patients on any drug";
+define pct_p/display "portion of patients with any physician visit";
+define pct_dp/display "portion of patients on any drug or with any physician visit ";
+run;
+/***************7. distribution***********************************************/
+
+/*****************7.1 # of physician visits per patietns********/
+
+data med_teen_phy;
+set med_teen;
+if source='phy' then source1=1;
+else source1=0;
+run;
+
+proc sql;
+create table med_teen_physum as
+select *, sum(source1) as physum
+from med_teen_phy
+group by patient_id;
+quit;
+
+proc sort data=med_teen_physum nodupkey out=physum_nodup;
+by patient_id physum;
+run;
+
+proc freq data=physum_nodup noprint;
+tables physum /out=physum;
+run;
+
+data physum_pct;
+set physum;
+pct=cat(round(percent,.01),'%');
+run;
+
+proc report data=physum_pct;
+title 'Distribution of # of  Physician Visits Per Patients';
+column physum count pct;
+define physum/display "Number of Physician Visits Per Patients";
+define count/display "Number of Patients";
+define pct/display "percent";
+run;
+/******************7.2 # of patients per drugcode********/
+proc sort data=pres_teen nodupkey out=pres_drugcode;
+by patient_id drugcode;
+run;
+
+proc freq  data=pres_drugcode noprint;
+tables drugcode /out=drug;
+run;
+
+data drug_pct;
+set drug;
+pct=cat(round(percent,.01),'%');
+run;
+
+proc report data=drug_pct;
+title 'Distribution of # of Patients Per Drugcode';
+column drugcode count pct;
+define count/display "Number of Patients";
+define pct/display "Percent";
+run;
+/****************7.3 # of patients per dianostic group*****/
+%macro dx(num);
+proc sort data=med_flag nodupkey out=&num._ ;
+by patient_id &num;
+run; 
+
+proc freq data=&num._ noprint;
+tables &num /out=&num;
+run;
+%mend dx;
+
+%dx(Dx_GP01);
+%dx(Dx_GP02);
+%dx(Dx_GP03);
+%dx(Dx_GP04);
+%dx(Dx_GP05);
+%dx(Dx_GP06);
+%dx(Dx_GP07);
+%dx(Dx_GP08);
+%dx(Dx_GP09);
+%dx(Dx_GP10);
+
+proc sql;
+create table dx as 
+select Dx_, count, percent
+from  (select * from Dx_GP01(rename=Dx_GP01=Dx_) outer union corr 
+select * from Dx_GP02(rename=Dx_GP02=Dx_ )outer union corr
+select * from Dx_GP03(rename=Dx_GP03=Dx_ )outer union corr
+select * from Dx_GP04(rename=Dx_GP04=Dx_ )outer union corr
+select * from Dx_GP05(rename=Dx_GP05=Dx_ )outer union corr
+select * from Dx_GP06(rename=Dx_GP06=Dx_ )outer union corr
+select * from Dx_GP07(rename=Dx_GP07=Dx_ )outer union corr
+select * from Dx_GP08(rename=Dx_GP08=Dx_ )outer union corr
+select * from Dx_GP09(rename=Dx_GP09=Dx_ )outer union corr
+select * from Dx_GP10(rename=Dx_GP10=Dx_ ));
+quit;
+     
+data dx1;
+set dx;
+if dx_=1;
+run;
+
+data dx_name;
+set dx1;
+do i=1 to 10;
+if _N_=i then groupname=cat('Dx_GP0',strip(put(i,best.)));
+end;
+pct=cat(round(percent,.01),'%');
+run;
+
+proc report data=dx_name;
+title 'Distribution of # of Patients Per Diagnostic Grouping';
+column groupname count pct;
+define groupname/display "Diagnostic Grouping";
+define count/display "Number of Patients";
+define pct/display "Percent";
+run;
+
+/*****************7.4 # of prescriptions per drugcode********/
+proc freq  data=pres_teen noprint;
+tables drugcode /out=drug1;
+run;
+
+data drug_pct1;
+set drug1;
+pct=cat(round(percent,.01),'%');
+run;
+
+proc report data=drug_pct;
+title 'Distribution of # of Prescriptions Per Drugcode';
+column drugcode count pct;
+define count/display "Number of Prescriptions";
+define pct/display "Percent";
+run;

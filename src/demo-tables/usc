@@ -1,0 +1,252 @@
+/***************1*************/
+proc import datafile='/folders/myfolders/test/usc1.csv' 
+ out=a
+ dbms=csv    
+ replace;
+run;
+
+data a1;
+set a;
+if C010=1 or C010=3 then diabetes=1;
+else diabetes=0;
+if C012=1 then insulin=1;
+else if C236=1 then insulin=2;
+else insulin=0;
+if C011=1 then oral=1;
+else oral=0;
+if oral=1 and (insulin=1 or insulin=2) then overlap=1;
+else overlap=0;
+run;
+
+data a_diabetes;
+set a1;
+if diabetes=1;
+run;
+
+proc format;
+value diabetes
+1 = "diabetes"
+0 = "no diabetes";
+value insulin
+1="using insulin"
+2="doctor recommended insulin"
+0="no insulin";
+value oral
+1="oral medication"
+0="no oral medication";
+value overlap
+1="overlap of two treatments "
+0="no overlap";
+run;
+
+proc freq data=a1  noprint;
+tables diabetes /out= diabetes;
+format diabetes diabetes.;
+run;
+proc freq data= a1  noprint;
+tables insulin /out=insulin;
+format insulin insulin.;
+run;
+proc freq data= a1  noprint;
+tables oral /out= oral;
+format oral oral.;
+run;
+proc freq data= a_diabetes noprint;
+tables overlap /out= overlap_diabetes;
+format overlap overlap.;
+run;
+proc freq data= a1 noprint;
+tables overlap /out= overlap_entirepop;
+format overlap overlap.;
+run;
+
+/*****************************2****************/
+proc import datafile='/folders/myfolders/test/usc.csv' 
+ out=b 
+ dbms=csv    
+ replace;
+run;
+/* first calculate cumulative drugcost for each id and keep the record if cumulative>$275*/
+
+data b_over275;
+  set b;
+  by BENE_ID; 
+  retain cumulative;
+  if first.BENE_ID then do;
+    cumulative = 0;
+  end;
+  cumulative = cumulative +Drug_cost;
+  if cumulative>275; 
+run;
+/*then select the first record for each id that made cumulative>$275*/
+proc sql;
+title 'the date of the claim that puts the individual over the
+deductible ($275)';
+create table b_firstdate_over275 as
+select bene_id,claim_dt from b1
+group by BENE_ID
+having cumulative=min(cumulative);
+quit;
+
+/***************3*************/
+
+/*data c1;
+set data c;
+
+dob06=input (DOB_06, mmddyy10.);
+dob07=input (DOB_07, mmddyy10.);
+dob08=input (DOB_08, mmddyy10.);
+
+a=input (01011900, mmddyy8.);
+if dob06<a then DOB06=.;
+if dob07<a then DOB07=.;
+if dob08<a then DOB08=.;
+
+average=mean(dob06,dob07,dob08);
+if average=dob06 or average=dob07 or average=dob08 then dob=average;
+else dob=.;
+/*if claim_dt =.*/
+/*replace the year 18xx with 19xx*/
+month06=scan(Strip(dob_06),1,'/');
+day06=scan(Strip(dob_06),2,'/');
+year06=scan(Strip(dob_06),3,'/');
+month07=scan(Strip(dob_07),1,'/');
+day07=scan(Strip(dob_07),2,'/');
+year07=scan(Strip(dob_07),3,'/');
+month08=scan(Strip(dob_08),1,'/');
+day08=scan(Strip(dob_08),2,'/');
+year08=scan(Strip(dob_08),3,'/');
+if year06<1900 then year06=year06+100;
+if year07<1900 then year07=year07+100;
+if year08<1900 then year08=year08+100;
+dob06new=cat(strip(moth06),'/',strip(day06),'/',strip(year06));
+dob07new=cat(strip(moth07),'/',strip(day07),'/',strip(year07));
+dob08new=cat(strip(moth08),'/',strip(day08),'/',strip(year08));
+/*if the existing records of birthdate are the same(equal to the average), then use their average as birthdate*/
+average=mean(dob06new,dob07new,dob08new);
+if average=dob06new or average=dob07new or average=dob08new then dob=average;
+else dob=.;
+/*if crec06=1,meaning the indicidual is eligible for medicare because of old age(>65) in 2006, his/her birthdate should be no later than 1941;
+similarly, if crec07=1, year of birth no later than 1942, if crec08=1 dob no later than 1943 ****/
+
+
+proc import datafile='/folders/myfolders/test/usc3.csv' 
+ out=c
+ dbms=csv    
+ replace;
+run;
+
+*Get the year of birth for three different dobs;
+data c1;
+set c;
+*assign year variables;
+yr1=2006;
+yr2=2007;
+yr3=2008;
+array dob{3} dob_06-dob_08;
+array yy{3} dob06-dob08;
+do i=1 to 3;
+yy{i}=year(dob{i});
+end;
+run;
+
+*use age 65 as an age flag;
+data c2;
+set c1;
+array yr{3} yr1-yr3;
+array flg{3} dobfl1-dobfl3;
+do i=1 to 3;
+flg{i}=yr{i}-65; 
+end;
+run;
+
+*use medicare eligibility and claim status to compare age flag and original birth year;
+data c3;
+set c2;
+array crec{3} crec06-crec08;
+array claim{3} claims06-claims08;
+array flg{3} dobfl1-dobfl3;
+array orig{3} dob06-dob08;
+array dob{3} dob1-dob3;
+do i=1 to 3;
+
+*start with disability, if a person enrolled medicare because of disability, then his/her birthdate
+should be after age flag;
+if crec{i}=2 and flg{i}>orig{i} then dob{i}=orig{i};
+*if a person enrolled medicare because of old age, his/her birthdate should be before age flag,
+but after 1900 (to filter 18XX birth year);
+else if crec{i}=1 and claim{i}='Y' and 1900<orig{i}<=flg{i} then dob{i}=orig{i};
+*since we donot have information on mortality status, for persons who were shown in medicare
+program but no claims, just keep all their birth record;
+else if crec{i}=1 and claim{i}='' then dob{i}=orig{i};
+end;
+run;
+
+
+data c4;
+set c3;
+keep bene_id dob1 dob2 dob3;
+run;
+
+*make the table from wide to long, in order to select birth year from the one just created,
+dob1, dob2, dob3;
+proc transpose data=c4 out=c4a;
+by bene_id;
+run;
+
+data c4b;
+set c4a(rename=(col1=dob));
+drop _name_;
+if dob ne .;  *only keep non missing dob;
+run;
+
+
+*without other information, if there is more than one reasonable dob
+I choose to go with the most frequent one;
+proc sql;
+create table c5 as
+select *,count(dob) as n
+from c4b 
+group by bene_id;
+quit;
+
+proc sort data=c5;
+by bene_id decending n;
+run;
+
+proc sort data=c5(drop=n) nodupkey out=dob;
+by bene_id;
+run;
+*Match birth year to orginal birth data;
+
+
+data c6;
+set c;
+keep bene_id dob_06-dob_08;
+run;
+
+proc transpose data=c6 out=c6a;
+by bene_id;
+run;
+
+data c6b;
+set c6a(rename=(col1=birthdate));
+drop _name_;
+run;
+
+proc sql;
+create table c6b2 as 
+select a.*,b.dob
+from c6b as a left join dob as b
+on a.bene_id=b.bene_id;
+quit;
+
+data c6c;
+set c6b2;
+if dob=year(birthdate);
+run;
+
+proc sort data=c6c(drop=dob) nodupkey out=c6d;
+by bene_id;
+run;
+
